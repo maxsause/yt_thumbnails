@@ -1,0 +1,19 @@
+
+syntax = "proto3";
+
+package thumbnail;
+
+option go_package = "/proto";
+
+service ThumbnailService {
+  rpc GetThumbnail (ThumbnailRequest) returns (ThumbnailResponse);
+}
+
+message ThumbnailRequest {
+  string video_url = 1;
+}
+
+message ThumbnailResponse {
+  bytes data = 1;
+  string video_id = 2;
+}
