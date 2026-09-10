@@ -2,8 +2,11 @@ package server
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"io"
+	"main/internal/database"
 	"main/proto"
 	"net"
 	"net/http"
@@ -15,19 +18,20 @@ import (
 
 type Server struct {
 	proto.UnimplementedThumbnailServiceServer
+	db *database.Database
 }
 
-func NewServer() *Server {
-	return &Server{}
+func NewServer(db *database.Database) *Server {
+	return &Server{db: db}
 }
 
-func Start(port string) error {
+func Start(port string, db *database.Database) error {
 	lis, err := net.Listen("tcp", port)
 	if err != nil {
 		return err
 	}
 	grpcServer := grpc.NewServer()
-	proto.RegisterThumbnailServiceServer(grpcServer, NewServer())
+	proto.RegisterThumbnailServiceServer(grpcServer, NewServer(db))
 	return grpcServer.Serve(lis)
 }
 
@@ -37,11 +41,25 @@ func (s *Server) GetThumbnail(ctx context.Context, req *proto.ThumbnailRequest) 
 	if err != nil {
 		return nil, err
 	}
-	//todo проверка кэша
-	data, err := downloadThumbnail(ctx, videoID)
+
+	data, found, err := s.getFromCache(videoID)
 	if err != nil {
 		return nil, err
 	}
+
+	if found {
+		return &proto.ThumbnailResponse{Data: data, VideoId: videoID}, nil
+	}
+
+	data, err = downloadThumbnail(ctx, videoID)
+	if err != nil {
+		return nil, err
+	}
+
+	if err = s.db.SaveThumbnail(videoID, data); err != nil {
+		return nil, err
+	}
+
 	return &proto.ThumbnailResponse{Data: data, VideoId: videoID}, nil
 }
 
@@ -106,4 +124,18 @@ func getVideoID(videoURL string) (string, error) {
 	}
 
 	return videoID, nil
+}
+
+func (s *Server) getFromCache(videoID string) ([]byte, bool, error) {
+	data, err := s.db.GetThumbnail(videoID)
+
+	if err == nil {
+		return data, true, nil
+	}
+
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, false, nil
+	}
+
+	return nil, false, fmt.Errorf("get thumbnail from cache: %w", err)
 }
